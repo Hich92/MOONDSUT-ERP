@@ -52,10 +52,7 @@ services:
       - backend
       - frontend
 
-  # ── 3. NEXT.JS (Interface utilisateur) ────────────────────────
-  # Rôle : affichage, formulaires, UX — appelle Saltcorn API
-  # Règle d'or : Next.js est "bête" — il affiche et envoie
-  #              Saltcorn est "intelligent" — il valide et stocke
+  # ── 3. NEXT.JS (Gateway UI) ───────────────────────────────────
   nextjs:
     build:
       context: ./frontend
@@ -64,16 +61,9 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      # Appels server-side (Next.js → Saltcorn via réseau Docker interne)
-      SALTCORN_INTERNAL_URL:     http://saltcorn:3000
-      # Appels client-side (browser → Caddy → Saltcorn)
-      NEXT_PUBLIC_SALTCORN_URL:  https://${DOMAIN_API}
       NEXTAUTH_SECRET:           ${NEXTAUTH_SECRET}
       NEXTAUTH_URL:              https://${DOMAIN_APP}
       NODE_ENV:                  production
-      # API token admin pour les appels server-side
-      SALTCORN_API_TOKEN:        ${SALTCORN_API_TOKEN}
-      # E-mail transactionnel (mot de passe oublié, bienvenue)
       SMTP_HOST:                 ${SMTP_HOST:-smtp.gmail.com}
       SMTP_PORT:                 ${SMTP_PORT:-587}
       SMTP_SECURE:               ${SMTP_SECURE:-false}
@@ -85,22 +75,132 @@ services:
       POSTGRES_DB:               ${POSTGRES_DB}
       POSTGRES_USER:             ${POSTGRES_USER}
       POSTGRES_PASSWORD:         ${POSTGRES_PASSWORD}
-      # Activepieces — appels server-side vers l'API Activepieces
       ACTIVEPIECES_INTERNAL_URL: ${ACTIVEPIECES_INTERNAL_URL}
       NEXT_PUBLIC_ACTIVEPIECES_URL: https://${DOMAIN_AUTOMATE}
       AP_API_KEY:                ${AP_API_KEY}
       AP_CHAT_FLOW_WEBHOOK:      ${AP_CHAT_FLOW_WEBHOOK}
-      # Groq — LLM pour le chatbot (géré via Activepieces flow kcNjgzV26nngFumzWwz0T)
+      AP_SIRENE_FLOW_WEBHOOK:    ${AP_SIRENE_FLOW_WEBHOOK:-}
       GROQ_API_KEY:              ${GROQ_API_KEY}
       GROQ_MODEL:                ${GROQ_MODEL}
+      SMOKE_TEST_TOKEN:          ${SMOKE_TEST_TOKEN}
+      # Services internes
+      SERVICE_CRM_URL:           http://svc-crm:3101
+      SERVICE_SALES_URL:         http://svc-sales:3102
+      SERVICE_PROJECTS_URL:      http://svc-projects:3103
+      SERVICE_PROCUREMENT_URL:   http://svc-procurement:3104
     volumes:
       - uploads_data:/app/uploads
     depends_on:
-      - saltcorn
       - activepieces
+      - svc-crm
+      - svc-sales
+      - svc-projects
+      - svc-procurement
     networks:
       - frontend
       - backend
+
+  # ── MODULE SERVICES (v0.1.2) ──────────────────────────────────
+
+  svc-crm:
+    build:
+      context: ./services/crm
+      dockerfile: Dockerfile
+    image: erp-svc-crm:0.1.2
+    restart: unless-stopped
+    environment:
+      PORT:             "3101"
+      POSTGRES_HOST:    db
+      POSTGRES_PORT:    "5432"
+      POSTGRES_DB:      ${POSTGRES_DB}
+      POSTGRES_USER:    ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      NEXTAUTH_SECRET:  ${NEXTAUTH_SECRET}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3101/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  svc-sales:
+    build:
+      context: ./services/sales
+      dockerfile: Dockerfile
+    image: erp-svc-sales:0.1.2
+    restart: unless-stopped
+    environment:
+      PORT:             "3102"
+      POSTGRES_HOST:    db
+      POSTGRES_PORT:    "5432"
+      POSTGRES_DB:      ${POSTGRES_DB}
+      POSTGRES_USER:    ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      NEXTAUTH_SECRET:  ${NEXTAUTH_SECRET}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3102/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  svc-projects:
+    build:
+      context: ./services/projects
+      dockerfile: Dockerfile
+    image: erp-svc-projects:0.1.2
+    restart: unless-stopped
+    environment:
+      PORT:             "3103"
+      POSTGRES_HOST:    db
+      POSTGRES_PORT:    "5432"
+      POSTGRES_DB:      ${POSTGRES_DB}
+      POSTGRES_USER:    ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      NEXTAUTH_SECRET:  ${NEXTAUTH_SECRET}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3103/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  svc-procurement:
+    build:
+      context: ./services/procurement
+      dockerfile: Dockerfile
+    image: erp-svc-procurement:0.1.2
+    restart: unless-stopped
+    environment:
+      PORT:             "3104"
+      POSTGRES_HOST:    db
+      POSTGRES_PORT:    "5432"
+      POSTGRES_DB:      ${POSTGRES_DB}
+      POSTGRES_USER:    ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      NEXTAUTH_SECRET:  ${NEXTAUTH_SECRET}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3104/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
   # ── 4. REDIS (Queue Activepieces) ────────────────────────────
   redis:
