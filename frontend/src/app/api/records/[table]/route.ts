@@ -3,11 +3,47 @@ import { getTenantSlug } from '@/lib/tenant'
 import { getToken, getUserId, getUserRole } from '@/lib/auth'
 import { resolveTenantId } from '@/db/tenant'
 import { makePostgRESTClient } from '@/lib/postgrest'
+import { emitEvent } from '@/lib/activepieces'
 import {
   TABLE_TO_RESOURCE, OWNER_FIELD, INJECT_OWNER_TABLES,
   getUserPermissions, checkAccess, allAccess,
   type PermMap,
 } from '@/lib/permissions'
+
+// ── Events post-mutation (fire & forget, alignés sur les contrats) ─
+
+function firePostCreate(table: string, record: Record<string, unknown>, tenantId: number) {
+  const r = { ...record, tenantId }
+  switch (table) {
+    case 'opportunities':
+      emitEvent('OPPORTUNITY_CREATED', r).catch(() => {})
+      break
+    case 'projects':
+      emitEvent('PROJECT_CREATED', r).catch(() => {})
+      break
+    case 'purchase_orders':
+      if (record.status === 'sent') emitEvent('PURCHASE_ORDER_SENT', r).catch(() => {})
+      break
+  }
+}
+
+function firePostPatch(table: string, patch: Record<string, unknown>, record: Record<string, unknown>, tenantId: number) {
+  const r = { ...record, tenantId }
+  switch (table) {
+    case 'opportunities':
+      if (patch.stage === 'won') emitEvent('OPPORTUNITY_WON', r).catch(() => {})
+      break
+    case 'contracts':
+      if (patch.signed_at) emitEvent('CONTRACT_SIGNED', r).catch(() => {})
+      break
+    case 'tasks':
+      if (patch.status === 'done') emitEvent('TASK_COMPLETED', { ...r, completedAt: new Date().toISOString() }).catch(() => {})
+      break
+    case 'purchase_orders':
+      if (patch.status === 'sent') emitEvent('PURCHASE_ORDER_SENT', r).catch(() => {})
+      break
+  }
+}
 
 // ── Résolution client PostgREST ───────────────────────────────────
 
@@ -118,7 +154,9 @@ export async function POST(
     const client = await resolveClient(req)
     const result = await client.create(params.table, payload)
     const id     = result?.id
-    // Saltcorn-compatible response format
+
+    if (tenantId) firePostCreate(params.table, result ?? payload, tenantId)
+
     return NextResponse.json({ success: true, data: result, id })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Erreur'
@@ -151,9 +189,15 @@ export async function PATCH(
 
   if (!id) return NextResponse.json({ error: 'id requis.' }, { status: 400 })
 
+  const slug      = getTenantSlug(req)
+  const tenantId  = slug ? await resolveTenantId(slug) : null
+
   try {
     const client = await resolveClient(req)
     const result = await client.update(params.table, Number(id), payload)
+
+    if (tenantId) firePostPatch(params.table, payload, { id: Number(id), ...(result ?? {}) }, tenantId)
+
     return NextResponse.json({ success: true, data: result })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Erreur'
