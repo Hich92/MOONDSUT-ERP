@@ -1,0 +1,40 @@
+# ── Secrets — JAMAIS committés ───────────────────────────
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# ── Node / Next.js ───────────────────────────────────────
+node_modules/
+frontend/.next/
+frontend/out/
+frontend/.pnp
+frontend/.pnp.js
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+
+# ── Docker volumes / data ────────────────────────────────
+postgres_data/
+saltcorn_data/
+caddy_data/
+caddy_config/
+uploads/
+
+# ── Saltcorn (supprimé v0.1.2 — dossier legacy conservé pour Caddy) ─
+saltcorn/
+
+# ── OS ───────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Logs ─────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Editeurs ─────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo

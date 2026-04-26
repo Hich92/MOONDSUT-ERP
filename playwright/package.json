@@ -1,0 +1,15 @@
+{
+  "name": "erp-playwright",
+  "private": true,
+  "scripts": {
+    "test": "playwright test",
+    "server": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0",
+    "@types/node": "^20.0.0"
+  }
+}

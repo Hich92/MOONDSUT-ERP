@@ -1,0 +1,12 @@
+import * as Sentry from '@sentry/nextjs'
+
+Sentry.init({
+  dsn: process.env.SENTRY_DSN,
+  enabled: !!process.env.SENTRY_DSN,
+
+  environment: process.env.NODE_ENV,
+  tracesSampleRate: 0.1,
+
+  // Capture toutes les erreurs non gérées server-side
+  integrations: [Sentry.captureConsoleIntegration({ levels: ['error'] })],
+})

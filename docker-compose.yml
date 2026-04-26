@@ -1,0 +1,265 @@
+services:
+
+  # ── 1. POSTGRESQL ─────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_DB:       ${POSTGRES_DB}
+      POSTGRES_USER:     ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend
+
+  # ── 2. SALTCORN (Admin + API backend) ─────────────────────────
+  # Rôle : schéma, permissions, triggers, règles métier, API REST
+  # Accès : api.moondust.cloud (admins/devs uniquement)
+  saltcorn:
+    build:
+      context: ./saltcorn
+      dockerfile: Dockerfile
+    image: erp-saltcorn
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PGHOST:                  db
+      PGPORT:                  5432
+      PGUSER:                  ${POSTGRES_USER}
+      PGPASSWORD:              ${POSTGRES_PASSWORD}
+      PGDATABASE:              ${POSTGRES_DB}
+      SESSION_SECRET:          ${SESSION_SECRET}
+      APP_URL:                 https://${DOMAIN_API}
+      SALTCORN_DISABLE_UPGRADE: "false"
+      TRUST_PROXY:             "1"
+      SALTCORN_NWORKERS:       "1"
+      # Active le mode multi-tenant
+      SALTCORN_MULTI_TENANT:   "true"
+    command: serve
+    volumes:
+      - saltcorn_data:/home/node/.config/
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - backend
+      - frontend
+
+  # ── 3. NEXT.JS (Interface utilisateur) ────────────────────────
+  # Rôle : affichage, formulaires, UX — appelle Saltcorn API
+  # Règle d'or : Next.js est "bête" — il affiche et envoie
+  #              Saltcorn est "intelligent" — il valide et stocke
+  nextjs:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: runner
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Appels server-side (Next.js → Saltcorn via réseau Docker interne)
+      SALTCORN_INTERNAL_URL:     http://saltcorn:3000
+      # Appels client-side (browser → Caddy → Saltcorn)
+      NEXT_PUBLIC_SALTCORN_URL:  https://${DOMAIN_API}
+      NEXTAUTH_SECRET:           ${NEXTAUTH_SECRET}
+      NEXTAUTH_URL:              https://${DOMAIN_APP}
+      NODE_ENV:                  production
+      # API token admin pour les appels server-side
+      SALTCORN_API_TOKEN:        ${SALTCORN_API_TOKEN}
+      # E-mail transactionnel (mot de passe oublié, bienvenue)
+      SMTP_HOST:                 ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT:                 ${SMTP_PORT:-587}
+      SMTP_SECURE:               ${SMTP_SECURE:-false}
+      SMTP_USER:                 ${SMTP_USER:-}
+      SMTP_PASS:                 ${SMTP_PASS:-}
+      SMTP_FROM:                 ${SMTP_FROM:-MoonDust ERP <no-reply@moondust.cloud>}
+      POSTGRES_HOST:             db
+      POSTGRES_PORT:             5432
+      POSTGRES_DB:               ${POSTGRES_DB}
+      POSTGRES_USER:             ${POSTGRES_USER}
+      POSTGRES_PASSWORD:         ${POSTGRES_PASSWORD}
+      # Activepieces — appels server-side vers l'API Activepieces
+      ACTIVEPIECES_INTERNAL_URL: ${ACTIVEPIECES_INTERNAL_URL}
+      NEXT_PUBLIC_ACTIVEPIECES_URL: https://${DOMAIN_AUTOMATE}
+      AP_API_KEY:                ${AP_API_KEY}
+      AP_CHAT_FLOW_WEBHOOK:      ${AP_CHAT_FLOW_WEBHOOK}
+      # Groq — LLM pour le chatbot (géré via Activepieces flow kcNjgzV26nngFumzWwz0T)
+      GROQ_API_KEY:              ${GROQ_API_KEY}
+      GROQ_MODEL:                ${GROQ_MODEL}
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      - saltcorn
+      - activepieces
+    networks:
+      - frontend
+      - backend
+
+  # ── 4. REDIS (Queue Activepieces) ────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend
+
+  # ── 5. ACTIVEPIECES (Automate visuel no-code) ─────────────────
+  # Rôle : orchestration, triggers automatiques, workflows visuels
+  # Accès : automate.moondust.cloud
+  # Intégrations : PostgreSQL ERP, Saltcorn REST API, Next.js webhooks
+  activepieces:
+    image: activepieces/activepieces:latest
+    restart: unless-stopped
+    environment:
+      AP_ENGINE_EXECUTABLE_PATH:   dist/packages/engine/main.js
+      AP_API_KEY:                  ${AP_API_KEY}
+      AP_ENCRYPTION_KEY:           ${AP_ENCRYPTION_KEY}
+      AP_JWT_SECRET:               ${AP_JWT_SECRET}
+      AP_FRONTEND_URL:             https://${DOMAIN_AUTOMATE}
+      AP_POSTGRES_DATABASE:        ${AP_POSTGRES_DATABASE}
+      AP_POSTGRES_HOST:            db
+      AP_POSTGRES_PORT:            5432
+      AP_POSTGRES_USERNAME:        ${POSTGRES_USER}
+      AP_POSTGRES_PASSWORD:        ${POSTGRES_PASSWORD}
+      AP_REDIS_URL:                redis://redis:6379
+      AP_EXECUTION_MODE:           UNSANDBOXED
+      AP_SANDBOX_RUN_TIME_SECONDS: "600"
+      AP_TELEMETRY_ENABLED:        "false"
+      AP_SIGN_UP_ENABLED:          "true"
+      AP_TEMPLATES_SOURCE_URL:     ""
+    volumes:
+      - activepieces_data:/root/.activepieces
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - backend
+      - frontend
+
+  # ── 6. PLAYWRIGHT (Runner de tests E2E) ──────────────────────
+  # Rôle : tests UI navigateur contre portal.moondust.cloud
+  # API  : POST http://playwright:3001/run → JSON résultats
+  playwright:
+    build:
+      context: ./playwright
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      ERP_EMAIL:            hadi@hadi.com
+      ERP_PASSWORD:         hadi@hadi.com
+      SALTCORN_API_TOKEN:   ${SALTCORN_API_TOKEN}
+    volumes:
+      - playwright_results:/results
+    networks:
+      - frontend   # accès internet pour portal.moondust.cloud
+      - backend    # accès nextjs pour éventuels appels API
+
+  # ── 8. POSTGREST (API REST auto-générée depuis PostgreSQL) ──────
+  postgrest:
+    image: postgrest/postgrest:v12.2.0
+    restart: unless-stopped
+    environment:
+      PGRST_DB_URI:             postgresql://authenticator:${POSTGREST_DB_PASSWORD}@db:5432/${POSTGRES_DB}
+      PGRST_DB_SCHEMAS:         public
+      PGRST_DB_ANON_ROLE:       postgrest_anon
+      PGRST_JWT_SECRET:         ${POSTGREST_JWT_SECRET}
+      PGRST_DB_PRE_REQUEST:     set_tenant_context
+      PGRST_SERVER_PORT:        "3001"
+      PGRST_OPENAPI_MODE:       disabled
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - backend
+
+  # ── 7. PAYROLL ETL (Service Python FastAPI) ──────────────────
+  payroll:
+    build:
+      context: /home/ZouZou/mon_excel_app
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - frontend
+      - backend
+
+  # ── 5. CADDY (Reverse proxy + TLS wildcard via Cloudflare DNS-01) ──
+  caddy:
+    build:
+      context: ./caddy
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - saltcorn
+      - nextjs
+      - payroll
+      - activepieces
+      - pgadmin
+    networks:
+      - frontend
+
+  # ── 9. PGADMIN (Admin DB — remplace Saltcorn admin) ──────────────
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL:    ${PGADMIN_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    networks:
+      - backend
+      - frontend
+
+# ── VOLUMES ───────────────────────────────────────────────────────
+volumes:
+  postgres_data:
+  saltcorn_data:
+  caddy_data:
+  caddy_config:
+  uploads_data:
+  redis_data:
+  activepieces_data:
+  playwright_results:
+  pgadmin_data:
+
+# ── RÉSEAUX ───────────────────────────────────────────────────────
+networks:
+  # Réseau isolé DB ↔ Saltcorn (PostgreSQL jamais exposé au frontend)
+  backend:
+    driver: bridge
+  # Réseau Saltcorn ↔ Next.js ↔ Caddy
+  frontend:
+    driver: bridge

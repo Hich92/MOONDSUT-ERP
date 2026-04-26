@@ -1,0 +1,119 @@
+# ══════════════════════════════════════════════════════════════════
+#  ERP MoonDust — Caddyfile
+#
+#  api.moondust.cloud      → Saltcorn (admin + API REST)
+#  portal.moondust.cloud   → Next.js  (portail principal / landing)
+#  *.moondust.cloud        → Next.js  (portails tenants — X-Tenant injecté)
+#
+#  TLS : DNS-01 via Cloudflare API → supporte wildcards automatiquement
+# ══════════════════════════════════════════════════════════════════
+
+{
+    # Challenge DNS-01 global — nécessaire pour les certs wildcard
+    acme_dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+}
+
+# ── API & ADMIN SALTCORN ─────────────────────────────────────────
+api.moondust.cloud {
+    encode gzip
+
+    header {
+        Access-Control-Allow-Origin  "*"
+        Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS"
+        Access-Control-Allow-Headers "Authorization, Content-Type"
+        Access-Control-Allow-Credentials "true"
+    }
+
+    @options method OPTIONS
+    respond @options 204
+
+    reverse_proxy saltcorn:3000 {
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Forwarded-Host  {host}
+        header_up X-Real-IP         {remote_host}
+    }
+
+    log {
+        output file /data/logs/api-access.log {
+            roll_size 10mb
+            roll_keep 5
+        }
+    }
+}
+
+# ── PORTAIL PRINCIPAL (Next.js — pas de tenant) ──────────────────
+portal.moondust.cloud {
+    encode gzip
+
+    reverse_proxy nextjs:3000 {
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Forwarded-Host  {host}
+        header_up X-Real-IP         {remote_host}
+    }
+
+    log {
+        output file /data/logs/portal-access.log {
+            roll_size 10mb
+            roll_keep 5
+        }
+    }
+}
+
+# ── ACTIVEPIECES (Automate visuel) ───────────────────────────────
+automate.moondust.cloud {
+    encode gzip
+
+    reverse_proxy activepieces:80 {
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Forwarded-Host  {host}
+        header_up X-Real-IP         {remote_host}
+    }
+
+    log {
+        output file /data/logs/automate-access.log {
+            roll_size 10mb
+            roll_keep 5
+        }
+    }
+}
+
+# ── PGADMIN (Admin DB) ───────────────────────────────────────────
+pgadmin.moondust.cloud {
+    encode gzip
+
+    reverse_proxy pgadmin:80 {
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Forwarded-Host  {host}
+        header_up X-Real-IP         {remote_host}
+        header_up X-Script-Name     /
+    }
+
+    log {
+        output file /data/logs/pgadmin-access.log {
+            roll_size 10mb
+            roll_keep 3
+        }
+    }
+}
+
+# ── PORTAILS TENANTS *.moondust.cloud ────────────────────────────
+# Capte tous les sous-domaines non définis explicitement ci-dessus.
+# Injecte X-Tenant = slug du tenant (ex: "acme" depuis acme.moondust.cloud)
+# Next.js lit X-Tenant pour router les appels Saltcorn au bon tenant.
+*.moondust.cloud {
+    encode gzip
+
+    reverse_proxy nextjs:3000 {
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Forwarded-Host  {host}
+        header_up X-Real-IP         {remote_host}
+        header_up X-Tenant          {labels.2}
+    }
+
+    log {
+        output file /data/logs/tenant-access.log {
+            roll_size 20mb
+            roll_keep 10
+        }
+    }
+}
