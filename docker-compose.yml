@@ -19,40 +19,7 @@ services:
     networks:
       - backend
 
-  # ── 2. SALTCORN (Admin + API backend) ─────────────────────────
-  # Rôle : schéma, permissions, triggers, règles métier, API REST
-  # Accès : api.moondust.cloud (admins/devs uniquement)
-  saltcorn:
-    build:
-      context: ./saltcorn
-      dockerfile: Dockerfile
-    image: erp-saltcorn
-    restart: unless-stopped
-    env_file: .env
-    environment:
-      PGHOST:                  db
-      PGPORT:                  5432
-      PGUSER:                  ${POSTGRES_USER}
-      PGPASSWORD:              ${POSTGRES_PASSWORD}
-      PGDATABASE:              ${POSTGRES_DB}
-      SESSION_SECRET:          ${SESSION_SECRET}
-      APP_URL:                 https://${DOMAIN_API}
-      SALTCORN_DISABLE_UPGRADE: "false"
-      TRUST_PROXY:             "1"
-      SALTCORN_NWORKERS:       "1"
-      # Active le mode multi-tenant
-      SALTCORN_MULTI_TENANT:   "true"
-    command: serve
-    volumes:
-      - saltcorn_data:/home/node/.config/
-    depends_on:
-      db:
-        condition: service_healthy
-    networks:
-      - backend
-      - frontend
-
-  # ── 3. NEXT.JS (Gateway UI) ───────────────────────────────────
+  # ── 2. NEXT.JS (Gateway UI) ───────────────────────────────────
   nextjs:
     build:
       context: ./frontend
@@ -83,7 +50,6 @@ services:
       GROQ_API_KEY:              ${GROQ_API_KEY}
       GROQ_MODEL:                ${GROQ_MODEL}
       SMOKE_TEST_TOKEN:          ${SMOKE_TEST_TOKEN}
-      # Services internes
       SERVICE_CRM_URL:           http://svc-crm:3101
       SERVICE_SALES_URL:         http://svc-sales:3102
       SERVICE_PROJECTS_URL:      http://svc-projects:3103
@@ -100,7 +66,7 @@ services:
       - frontend
       - backend
 
-  # ── MODULE SERVICES (v0.1.2) ──────────────────────────────────
+  # ── MODULE SERVICES ───────────────────────────────────────────
 
   svc-crm:
     build:
@@ -109,13 +75,13 @@ services:
     image: erp-svc-crm:0.1.2
     restart: unless-stopped
     environment:
-      PORT:             "3101"
-      POSTGRES_HOST:    db
-      POSTGRES_PORT:    "5432"
-      POSTGRES_DB:      ${POSTGRES_DB}
-      POSTGRES_USER:    ${POSTGRES_USER}
+      PORT:              "3101"
+      POSTGRES_HOST:     db
+      POSTGRES_PORT:     "5432"
+      POSTGRES_DB:       ${POSTGRES_DB}
+      POSTGRES_USER:     ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      NEXTAUTH_SECRET:  ${NEXTAUTH_SECRET}
+      NEXTAUTH_SECRET:   ${NEXTAUTH_SECRET}
     depends_on:
       db:
         condition: service_healthy
@@ -134,13 +100,13 @@ services:
     image: erp-svc-sales:0.1.2
     restart: unless-stopped
     environment:
-      PORT:             "3102"
-      POSTGRES_HOST:    db
-      POSTGRES_PORT:    "5432"
-      POSTGRES_DB:      ${POSTGRES_DB}
-      POSTGRES_USER:    ${POSTGRES_USER}
+      PORT:              "3102"
+      POSTGRES_HOST:     db
+      POSTGRES_PORT:     "5432"
+      POSTGRES_DB:       ${POSTGRES_DB}
+      POSTGRES_USER:     ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      NEXTAUTH_SECRET:  ${NEXTAUTH_SECRET}
+      NEXTAUTH_SECRET:   ${NEXTAUTH_SECRET}
     depends_on:
       db:
         condition: service_healthy
@@ -159,13 +125,13 @@ services:
     image: erp-svc-projects:0.1.2
     restart: unless-stopped
     environment:
-      PORT:             "3103"
-      POSTGRES_HOST:    db
-      POSTGRES_PORT:    "5432"
-      POSTGRES_DB:      ${POSTGRES_DB}
-      POSTGRES_USER:    ${POSTGRES_USER}
+      PORT:              "3103"
+      POSTGRES_HOST:     db
+      POSTGRES_PORT:     "5432"
+      POSTGRES_DB:       ${POSTGRES_DB}
+      POSTGRES_USER:     ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      NEXTAUTH_SECRET:  ${NEXTAUTH_SECRET}
+      NEXTAUTH_SECRET:   ${NEXTAUTH_SECRET}
     depends_on:
       db:
         condition: service_healthy
@@ -184,13 +150,13 @@ services:
     image: erp-svc-procurement:0.1.2
     restart: unless-stopped
     environment:
-      PORT:             "3104"
-      POSTGRES_HOST:    db
-      POSTGRES_PORT:    "5432"
-      POSTGRES_DB:      ${POSTGRES_DB}
-      POSTGRES_USER:    ${POSTGRES_USER}
+      PORT:              "3104"
+      POSTGRES_HOST:     db
+      POSTGRES_PORT:     "5432"
+      POSTGRES_DB:       ${POSTGRES_DB}
+      POSTGRES_USER:     ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      NEXTAUTH_SECRET:  ${NEXTAUTH_SECRET}
+      NEXTAUTH_SECRET:   ${NEXTAUTH_SECRET}
     depends_on:
       db:
         condition: service_healthy
@@ -202,7 +168,7 @@ services:
       timeout: 5s
       retries: 3
 
-  # ── 4. REDIS (Queue Activepieces) ────────────────────────────
+  # ── 3. REDIS (Queue Activepieces) ─────────────────────────────
   redis:
     image: redis:7-alpine
     restart: unless-stopped
@@ -217,10 +183,7 @@ services:
     networks:
       - backend
 
-  # ── 5. ACTIVEPIECES (Automate visuel no-code) ─────────────────
-  # Rôle : orchestration, triggers automatiques, workflows visuels
-  # Accès : automate.moondust.cloud
-  # Intégrations : PostgreSQL ERP, Saltcorn REST API, Next.js webhooks
+  # ── 4. ACTIVEPIECES (Bus d'événements + intégrations externes) ─
   activepieces:
     image: activepieces/activepieces:latest
     restart: unless-stopped
@@ -252,43 +215,40 @@ services:
       - backend
       - frontend
 
-  # ── 6. PLAYWRIGHT (Runner de tests E2E) ──────────────────────
-  # Rôle : tests UI navigateur contre portal.moondust.cloud
-  # API  : POST http://playwright:3001/run → JSON résultats
+  # ── 5. PLAYWRIGHT (Runner de tests E2E) ───────────────────────
   playwright:
     build:
       context: ./playwright
       dockerfile: Dockerfile
     restart: unless-stopped
     environment:
-      ERP_EMAIL:            hadi@hadi.com
-      ERP_PASSWORD:         hadi@hadi.com
-      SALTCORN_API_TOKEN:   ${SALTCORN_API_TOKEN}
+      ERP_EMAIL:    hadi@hadi.com
+      ERP_PASSWORD: hadi@hadi.com
     volumes:
       - playwright_results:/results
     networks:
-      - frontend   # accès internet pour portal.moondust.cloud
-      - backend    # accès nextjs pour éventuels appels API
+      - frontend
+      - backend
 
-  # ── 8. POSTGREST (API REST auto-générée depuis PostgreSQL) ──────
+  # ── 6. POSTGREST (Accès tables legacy — transitoire) ──────────
   postgrest:
     image: postgrest/postgrest:v12.2.0
     restart: unless-stopped
     environment:
-      PGRST_DB_URI:             postgresql://authenticator:${POSTGREST_DB_PASSWORD}@db:5432/${POSTGRES_DB}
-      PGRST_DB_SCHEMAS:         public
-      PGRST_DB_ANON_ROLE:       postgrest_anon
-      PGRST_JWT_SECRET:         ${POSTGREST_JWT_SECRET}
-      PGRST_DB_PRE_REQUEST:     set_tenant_context
-      PGRST_SERVER_PORT:        "3001"
-      PGRST_OPENAPI_MODE:       disabled
+      PGRST_DB_URI:         postgresql://authenticator:${POSTGREST_DB_PASSWORD}@db:5432/${POSTGRES_DB}
+      PGRST_DB_SCHEMAS:     public
+      PGRST_DB_ANON_ROLE:   postgrest_anon
+      PGRST_JWT_SECRET:     ${POSTGREST_JWT_SECRET}
+      PGRST_DB_PRE_REQUEST: set_tenant_context
+      PGRST_SERVER_PORT:    "3001"
+      PGRST_OPENAPI_MODE:   disabled
     depends_on:
       db:
         condition: service_healthy
     networks:
       - backend
 
-  # ── 7. PAYROLL ETL (Service Python FastAPI) ──────────────────
+  # ── 7. PAYROLL ETL (Service Python FastAPI) ───────────────────
   payroll:
     build:
       context: /home/ZouZou/mon_excel_app
@@ -303,7 +263,7 @@ services:
       - frontend
       - backend
 
-  # ── 5. CADDY (Reverse proxy + TLS wildcard via Cloudflare DNS-01) ──
+  # ── 8. CADDY (Reverse proxy + TLS wildcard Cloudflare DNS-01) ─
   caddy:
     build:
       context: ./caddy
@@ -320,7 +280,6 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
-      - saltcorn
       - nextjs
       - payroll
       - activepieces
@@ -328,14 +287,14 @@ services:
     networks:
       - frontend
 
-  # ── 9. PGADMIN (Admin DB — remplace Saltcorn admin) ──────────────
+  # ── 9. PGADMIN (Admin DB) ─────────────────────────────────────
   pgadmin:
     image: dpage/pgadmin4:latest
     restart: unless-stopped
     environment:
-      PGADMIN_DEFAULT_EMAIL:    ${PGADMIN_EMAIL}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}
-      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_DEFAULT_EMAIL:                   ${PGADMIN_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD:                ${PGADMIN_PASSWORD}
+      PGADMIN_CONFIG_SERVER_MODE:              "False"
       PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
     volumes:
       - pgadmin_data:/var/lib/pgadmin
@@ -346,7 +305,6 @@ services:
 # ── VOLUMES ───────────────────────────────────────────────────────
 volumes:
   postgres_data:
-  saltcorn_data:
   caddy_data:
   caddy_config:
   uploads_data:
@@ -357,9 +315,7 @@ volumes:
 
 # ── RÉSEAUX ───────────────────────────────────────────────────────
 networks:
-  # Réseau isolé DB ↔ Saltcorn (PostgreSQL jamais exposé au frontend)
   backend:
     driver: bridge
-  # Réseau Saltcorn ↔ Next.js ↔ Caddy
   frontend:
     driver: bridge
